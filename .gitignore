@@ -1,0 +1,14 @@
+# Opinions
+.editorconfig
+
+# Build output and package managers
+build/
+dist/
+node_modules/
+vendor/
+
+# Env variables
+.env
+
+# Mac Junk
+.DS_Store

@@ -1,0 +1,68 @@
+<?php
+
+return [
+    'event_type' => [
+        'name' => 'Event Types',
+        'singular_name' => 'Event Type',
+        'object_types' => ['event'],
+        'public' => true,
+        'show_in_rest' => true,
+        'rest_base' => 'event-types',
+        'hierarchical' => true,
+        'rewrite_slug' => 'event-types',
+        'capabilities' => [
+            'manage_terms' => 'manage_event_type_associations',
+            'edit_terms' => 'manage_event_type_associations',
+            'delete_terms' => 'manage_event_type_associations',
+            'assign_terms' => 'edit_posts',
+        ],
+        'fields' => [
+            'event_type_color' => [
+                'type' => 'string',
+                'show_in_rest' => true,
+            ],
+            'event_type_icon' => [
+                'type' => 'string',
+                'show_in_rest' => true,
+            ],
+            'event_type_priority' => [
+                'type' => 'integer',
+                'show_in_rest' => true,
+                'default' => 0,
+            ],
+        ],
+    ],
+    'collective_association' => [
+        'name' => 'Collective Associations',
+        'singular_name' => 'Collective Association',
+        'object_types' => ['event', 'collective'],
+        'public' => false,
+        'show_ui' => true,
+        'show_in_rest' => true,
+        'rest_base' => 'collective-associations',
+        'hierarchical' => true,
+        'rewrite_slug' => 'collective-associations',
+        'capabilities' => [
+            'manage_terms' => 'manage_collective_associations',
+            'edit_terms' => 'manage_collective_associations',
+            'delete_terms' => 'manage_collective_associations',
+            'assign_terms' => 'edit_posts',
+        ],
+        'fields' => [
+            'collective_association_code' => [
+                'type' => 'string',
+                'show_in_rest' => true,
+            ],
+            'collective_association_contact_email' => [
+                'type' => 'string',
+                'show_in_rest' => true,
+                'sanitize_callback' => 'sanitize_email',
+            ],
+            'collective_association_featured' => [
+                'type' => 'boolean',
+                'show_in_rest' => true,
+                'default' => false,
+            ],
+        ],
+    ],
+];
