@@ -17,8 +17,12 @@
     "standard-version": "^9.5.0"
   },
   "overrides": {
+    "axios": "^1.15.2",
     "serialize-javascript": "^7.0.5",
     "webpack-dev-server": "^5.2.2",
     "minimatch": "^9.0.7"
+  },
+  "dependencies": {
+    "select2": "github:woocommerce/selectWoo"
   }
 }

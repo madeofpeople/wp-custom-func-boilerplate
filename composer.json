@@ -1,7 +1,10 @@
 {
     "name": "abcnorio/custom-func",
+    "description": "Composer-first functionality plugin for the abcnorio.org headless WordPress project.",
     "type": "wordpress-plugin",
     "license": "GPL-2.0-or-later",
+    "version": "0.1.2",
+    "keywords": ["wordpress", "bedrock", "headless", "abcnorio"],
     "authors": [
         {
             "name": "Thiago de Mello Bueno",
