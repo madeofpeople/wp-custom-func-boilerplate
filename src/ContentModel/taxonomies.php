@@ -1,12 +1,30 @@
 <?php
 
 return [
+    'press_flag' => [
+        'name'             => 'Press Flags',
+        'singular_name'    => 'Press Flag',
+        'object_types'     => ['press_item'],
+        'public'           => false,
+        'show_ui'          => true,
+        'show_in_rest'     => true,
+        'show_admin_column' => true,
+        'hierarchical'     => false,
+        'rewrite_slug'     => 'press-flags',
+        'capabilities'     => [
+            'manage_terms' => 'manage_options',
+            'edit_terms'   => 'manage_options',
+            'delete_terms' => 'manage_options',
+            'assign_terms' => 'edit_posts',
+        ],
+    ],
     'event_type' => [
         'name' => 'Event Types',
         'singular_name' => 'Event Type',
         'object_types' => ['event'],
         'public' => true,
         'show_in_rest' => true,
+        'show_admin_column' => true,
         'rest_base' => 'event-types',
         'hierarchical' => true,
         'rewrite_slug' => 'event-types',
@@ -32,6 +50,24 @@ return [
             ],
         ],
     ],
+    'event_tag' => [
+        'name' => 'Event Tags',
+        'singular_name' => 'Event Tag',
+        'object_types' => ['event'],
+        'public' => true,
+        'show_in_rest' => true,
+        'show_admin_column' => true,
+        'rest_base' => 'event-tags',
+        'hierarchical' => false,
+        'rewrite_slug' => 'event-tags',
+        'meta_box_cb' => false,
+        'capabilities' => [
+            'manage_terms' => 'manage_event_type_associations',
+            'edit_terms' => 'manage_event_type_associations',
+            'delete_terms' => 'manage_event_type_associations',
+            'assign_terms' => 'edit_posts',
+        ],
+    ],
     'collective_association' => [
         'name' => 'Collective Associations',
         'singular_name' => 'Collective Association',
@@ -39,6 +75,7 @@ return [
         'public' => false,
         'show_ui' => true,
         'show_in_rest' => true,
+        'show_admin_column' => true,
         'rest_base' => 'collective-associations',
         'hierarchical' => true,
         'rewrite_slug' => 'collective-associations',

@@ -15,43 +15,35 @@ return [
         'menu_icon' => 'dashicons-calendar-alt',
         'taxonomies' => [
             'event_type',
-            'collective_association'],
+            'event_tag',
+            'collective_association'
+        ],
         'capability_type' => [
             'event',
-            'events'],
-        'map_meta_cap' => true,
-        'fields' => [
-            'event_start_date' => [
-                'type' => 'string',
-                'show_in_rest' => false,
-            ],
-            'event_end_date' => [
-                'type' => 'string',
-                'show_in_rest' => false,
-            ],
-            'event_venue_name' => [
-                'type' => 'string',
-                'show_in_rest' => false,
-            ],
-            'event_timezone' => [
-                'type' => 'string',
-                'show_in_rest' => false,
-            ],
-            'event_organizer_name' => [
-                'type' => 'string',
-                'show_in_rest' => false,
-            ],
-            'event_organizer_email' => [
-                'type' => 'string',
-                'show_in_rest' => false,
-                'sanitize_callback' => 'sanitize_email',
-            ],
+            'events'
         ],
+        'map_meta_cap' => true,
+
+        // ACFFieldGroups.php is canonical for editor-managed fields.
+        // Only add a fields array here when explicit core meta registration
+        // is needed outside ACF.
+        'template' => array(
+            array('core/image'),
+            array('core/paragraph', array(
+                'placeholder' => 'Add blurb about the event here.',
+            )),
+            array('core/list', array(
+                'placeholder' => 'Participant Links',
+            )),
+        ),
+
+
     ],
     'collective' => [
         'name' => 'Collectives',
         'singular_name' => 'Collective',
         'rewrite_slug' => 'collectives',
+        'show_in_nav_menus' => true,
         'supports' => [
             'title',
             'editor',
@@ -66,23 +58,6 @@ return [
             'collectives'
         ],
         'map_meta_cap' => true,
-        'fields' => [
-            'collective_city' => [
-                'type' => 'string',
-            ],
-            'collective_email' => [
-                'type' => 'string',
-                'sanitize_callback' => 'sanitize_email',
-            ],
-            'collective_website' => [
-                'type' => 'string',
-                'sanitize_callback' => 'esc_url_raw',
-            ],
-            'collective_since_year' => [
-                'type' => 'integer',
-                'default' => 0,
-            ],
-        ],
     ],
     'news_item' => [
         'name' => 'News',
@@ -99,38 +74,32 @@ return [
         'has_archive' => true,
         'menu_icon' => 'dashicons-calendar-alt',
         'taxonomies' => [
-            'event_type',
-            'collective_association'],
+            'collective_association'
+        ],
         'capability_type' => [
             'news_item',
-            'news_items'],
-        'map_meta_cap' => true,
-        'fields' => [
-            'event_start_date' => [
-                'type' => 'string',
-                'show_in_rest' => false,
-            ],
-            'event_end_date' => [
-                'type' => 'string',
-                'show_in_rest' => false,
-            ],
-            'event_venue_name' => [
-                'type' => 'string',
-                'show_in_rest' => false,
-            ],
-            'event_timezone' => [
-                'type' => 'string',
-                'show_in_rest' => false,
-            ],
-            'event_organizer_name' => [
-                'type' => 'string',
-                'show_in_rest' => false,
-            ],
-            'event_organizer_email' => [
-                'type' => 'string',
-                'show_in_rest' => false,
-                'sanitize_callback' => 'sanitize_email',
-            ],
+            'news_items'
         ],
+        'map_meta_cap' => true,
+    ],
+    'press_item' => [
+        'name' => 'Press',
+        'singular_name' => 'Press Item',
+        'rest_base' => 'press_items',
+        'rewrite_slug' => 'press',
+        'supports' => [
+            'title',
+            'editor',
+            'custom-fields',
+        ],
+        'has_archive' => true,
+        'show_in_rest' => true,
+        'menu_icon' => 'dashicons-pressthis',
+        'capability_type' => [
+            'press_item',
+            'press_items',
+        ],
+        'map_meta_cap' => true,
+        'taxonomies'   => ['press_flag'],
     ],
 ];

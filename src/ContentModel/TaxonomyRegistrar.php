@@ -36,6 +36,7 @@ final class TaxonomyRegistrar
             'public' => $definition['public'] ?? true,
             'show_ui' => $definition['show_ui'] ?? true,
             'show_in_rest' => $definition['show_in_rest'] ?? true,
+            'show_admin_column' => $definition['show_admin_column'] ?? true,
             'rest_base' => $definition['rest_base'] ?? self::defaultRestBase($slug),
             'hierarchical' => $definition['hierarchical'] ?? false,
             'rewrite' => [
@@ -44,6 +45,10 @@ final class TaxonomyRegistrar
             ],
             'capabilities' => $definition['capabilities'] ?? [],
         ];
+
+        if (array_key_exists('meta_box_cb', $definition)) {
+            $args['meta_box_cb'] = $definition['meta_box_cb'];
+        }
 
         register_taxonomy($slug, $objectTypes, $args);
 

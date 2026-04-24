@@ -36,6 +36,7 @@ final class PostTypeRegistrar
             'labels' => $labels,
             'public' => $definition['public'] ?? true,
             'show_ui' => $definition['show_ui'] ?? true,
+            'show_in_nav_menus' => $definition['show_in_nav_menus'] ?? false,
             'show_in_rest' => $definition['show_in_rest'] ?? true,
             'rest_base' => $definition['rest_base'] ?? self::defaultRestBase($slug),
             'rewrite' => [
@@ -49,6 +50,8 @@ final class PostTypeRegistrar
             'capability_type' => $definition['capability_type'] ?? 'post',
             'capabilities' => $definition['capabilities'] ?? [],
             'map_meta_cap' => $definition['map_meta_cap'] ?? false,
+            'template' => $definition['template'] ?? [],
+            'template_lock' => $definition['template_lock'] ?? false,
         ];
 
         register_post_type($slug, $args);
