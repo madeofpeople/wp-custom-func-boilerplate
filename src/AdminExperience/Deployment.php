@@ -4,14 +4,162 @@ namespace abcnorio\CustomFunc\AdminExperience;
 
 final class Deployment
 {
+    /**
+     * @var array<string, bool>
+     */
+    private static array $saveTriggerQueuedTargets = [];
+
+    /**
+     * @return array<int, string>
+     */
+    private static function envKeys(): array
+    {
+        return ['dev', 'staging', 'production'];
+    }
+
+    private static function isValidEnv(string $env): bool
+    {
+        return in_array($env, self::envKeys(), true);
+    }
+
+    private static function orchestratorBaseUrl(): string
+    {
+        return rtrim(getenv('ASTRO_BUILD_TRIGGER_URL') ?: 'http://deploy-orchestrator:4011', '/');
+    }
+
+    private static function orchestratorSecret(): string
+    {
+        return (string) (getenv('ASTRO_BUILD_TRIGGER_SECRET') ?: '');
+    }
+
     public static function registerHooks(): void
     {
         add_action('admin_menu', [self::class, 'addMenuPage']);
+        add_action('admin_notices', [self::class, 'maybeRenderAdminNotice']);
         add_action('admin_enqueue_scripts', [self::class, 'enqueueAssets']);
         add_action('wp_ajax_abcnorio_trigger_build', [self::class, 'ajaxTriggerBuild']);
         add_action('wp_ajax_abcnorio_poll_build_status', [self::class, 'ajaxPollBuildStatus']);
         add_action('wp_ajax_abcnorio_download_backup', [self::class, 'ajaxDownloadBackup']);
         add_action('wp_ajax_abcnorio_restore_backup', [self::class, 'ajaxRestoreBackup']);
+        add_action('save_post', [self::class, 'maybeQueueSaveTriggeredBuildForPost'], 20, 3);
+        add_action('before_delete_post', [self::class, 'maybeQueueSaveTriggeredBuildForDelete'], 20, 1);
+    }
+
+    private static function saveTriggerEnabled(): bool
+    {
+        return (string) (getenv('WP_SAVE_TRIGGER_QUEUE_ENABLED') ?: '0') === '1';
+    }
+
+    private static function saveTriggerTarget(): string
+    {
+        $configured = sanitize_key((string) (getenv('WP_SAVE_TRIGGER_TARGET') ?: ''));
+        if (in_array($configured, ['dev', 'staging'], true)) {
+            return $configured;
+        }
+
+        $wpEnv = sanitize_key((string) (defined('WP_ENV') ? WP_ENV : ''));
+        if (in_array($wpEnv, ['development', 'dev'], true)) {
+            return 'dev';
+        }
+
+        if ($wpEnv === 'staging') {
+            return 'staging';
+        }
+
+        return 'dev';
+    }
+
+    private static function shouldQueueForPost(
+        int $postId,
+        ?\WP_Post $post = null,
+        bool $isUpdate = true
+    ): bool {
+        if (!self::saveTriggerEnabled()) {
+            return false;
+        }
+
+        if (wp_is_post_revision($postId) || wp_is_post_autosave($postId)) {
+            return false;
+        }
+
+        $resolvedPost = $post instanceof \WP_Post ? $post : get_post($postId);
+        if (!$resolvedPost instanceof \WP_Post) {
+            return false;
+        }
+
+        if ($resolvedPost->post_status === 'auto-draft') {
+            return false;
+        }
+
+        if (in_array($resolvedPost->post_type, ['attachment', 'revision', 'nav_menu_item'], true)) {
+            return false;
+        }
+
+        // Insert and update events can affect rendered frontend state.
+        return true;
+    }
+
+    private static function queueSaveTriggeredBuild(string $reason = ''): void
+    {
+        $target = self::saveTriggerTarget();
+        if ($target === '' || $target === 'production') {
+            return;
+        }
+
+        if (isset(self::$saveTriggerQueuedTargets[$target])) {
+            return;
+        }
+
+        self::$saveTriggerQueuedTargets[$target] = true;
+
+        $triggerUrl = self::orchestratorBaseUrl();
+        $secret = self::orchestratorSecret();
+
+        $payload = [
+            'target' => $target,
+            'source' => 'save',
+        ];
+
+        if ($reason !== '') {
+            $payload['reason'] = $reason;
+        }
+
+        $response = wp_remote_post("{$triggerUrl}/trigger", [
+            'headers' => [
+                'Content-Type' => 'application/json',
+                'Authorization' => "Bearer {$secret}",
+            ],
+            'body' => wp_json_encode($payload),
+            'timeout' => 5,
+        ]);
+
+        if (is_wp_error($response)) {
+            error_log('[abcnorio][deploy] save-trigger enqueue failed: ' . $response->get_error_message());
+            return;
+        }
+
+        $code = wp_remote_retrieve_response_code($response);
+        if ($code < 200 || $code >= 300) {
+            error_log('[abcnorio][deploy] save-trigger enqueue failed: HTTP ' . (string) $code);
+        }
+    }
+
+    public static function maybeQueueSaveTriggeredBuildForPost(int $postId, \WP_Post $post, bool $update): void
+    {
+        if (!self::shouldQueueForPost($postId, $post, $update)) {
+            return;
+        }
+
+        self::queueSaveTriggeredBuild('save_post');
+    }
+
+    public static function maybeQueueSaveTriggeredBuildForDelete(int $postId): void
+    {
+        if (!self::shouldQueueForPost($postId, null, true)) {
+            return;
+        }
+
+        self::queueSaveTriggeredBuild('before_delete_post');
     }
 
     private static function backupArchiveDir(): string
@@ -23,6 +171,16 @@ final class Deployment
 
         $workspaceRoot = dirname(ABCNORIO_CUSTOM_FUNC_FILE, 4);
         return rtrim($workspaceRoot, '/') . '/astro/site/build-archives';
+    }
+
+    private static function deploymentStatusPath(): string
+    {
+        $configured = trim((string) (getenv('ASTRO_DEPLOYMENT_STATUS_FILE') ?: ''));
+        if ($configured !== '') {
+            return $configured;
+        }
+
+        return self::backupArchiveDir() . '/deployment-status.json';
     }
 
     private static function buildRootDir(string $env): string
@@ -67,56 +225,217 @@ final class Deployment
         return $staticRoot . '/' . $dirName;
     }
 
-    private static function archiveBelongsToEnv(string $name, string $env): bool
-    {
-        $envPrefix = 'abcnorio-astro-' . $env . '-';
-        if (strpos($name, $envPrefix) === 0) {
-            return true;
-        }
-
-        // Older archives were production-only and had no env segment in the name.
-        return $env === 'production' && strpos($name, 'abcnorio-astro-') === 0 && strpos($name, 'abcnorio-astro-production-') !== 0;
-    }
-
     /**
-     * @return array<int, array{name: string, path: string, mtime: int}>
+     * @return array{ok: bool, message: string, names: array<int, string>}
      */
-    private static function recentBackups(string $env, int $limit = 3): array
+    private static function statusBackupNamesForEnv(string $env): array
     {
-        $archiveDir = self::backupArchiveDir();
-        if (!is_dir($archiveDir)) {
-            return [];
-        }
-
-        $matches = glob($archiveDir . '/*.zip');
-        if (!is_array($matches) || $matches === []) {
-            return [];
-        }
-
-        $entries = [];
-        foreach ($matches as $path) {
-            if (!is_file($path)) {
-                continue;
-            }
-
-            $name = basename($path);
-            if (!self::archiveBelongsToEnv($name, $env)) {
-                continue;
-            }
-
-            $mtime = filemtime($path);
-            $entries[] = [
-                'name' => $name,
-                'path' => $path,
-                'mtime' => is_int($mtime) ? $mtime : 0,
+        $status = self::readDeploymentStatus();
+        if (!$status['ok']) {
+            return [
+                'ok' => false,
+                'message' => $status['message'],
+                'names' => [],
             ];
         }
 
-        usort($entries, static function (array $a, array $b): int {
+        $envStatus = $status['status']['envs'][$env] ?? null;
+        if (!is_array($envStatus) || !isset($envStatus['backups']) || !is_array($envStatus['backups'])) {
+            return [
+                'ok' => false,
+                'message' => __('Backup metadata is missing for selected environment.', 'abcnorio-func'),
+                'names' => [],
+            ];
+        }
+
+        $names = [];
+        foreach ($envStatus['backups'] as $entry) {
+            if (!is_array($entry)) {
+                continue;
+            }
+
+            $name = trim((string) ($entry['name'] ?? ''));
+            if ($name === '') {
+                continue;
+            }
+
+            $names[] = $name;
+        }
+
+        return [
+            'ok' => true,
+            'message' => '',
+            'names' => array_values(array_unique($names)),
+        ];
+    }
+
+    /**
+     * @param mixed $value
+     */
+    private static function normalizeBackupMtime($value): int
+    {
+        if (is_int($value)) {
+            return $value;
+        }
+
+        if (is_string($value) && is_numeric($value)) {
+            return (int) $value;
+        }
+
+        return 0;
+    }
+
+    /**
+     * @param mixed $envStatus
+     * @return array<int, array{name: string, mtime: int}>
+     */
+    private static function normalizeBackupsFromStatus($envStatus): array
+    {
+        if (!is_array($envStatus) || !isset($envStatus['backups']) || !is_array($envStatus['backups'])) {
+            return [];
+        }
+
+        $out = [];
+        foreach ($envStatus['backups'] as $entry) {
+            if (!is_array($entry)) {
+                continue;
+            }
+
+            $name = trim((string) ($entry['name'] ?? ''));
+            if ($name === '') {
+                continue;
+            }
+
+            $mtime = self::normalizeBackupMtime($entry['mtime'] ?? null);
+            if ($mtime === 0 && isset($entry['createdAt']) && is_string($entry['createdAt'])) {
+                $parsed = strtotime($entry['createdAt']);
+                $mtime = is_int($parsed) ? $parsed : 0;
+            }
+
+            $out[] = [
+                'name' => $name,
+                'mtime' => $mtime,
+            ];
+        }
+
+        usort($out, static function (array $a, array $b): int {
             return $b['mtime'] <=> $a['mtime'];
         });
 
-        return array_slice($entries, 0, $limit);
+        return array_slice($out, 0, 3);
+    }
+
+    /**
+     * @param mixed $decoded
+     * @return array{ok: bool, message: string, status: array<string, mixed>}
+     */
+    private static function validateDeploymentStatus($decoded): array
+    {
+        if (!is_array($decoded) || !isset($decoded['envs']) || !is_array($decoded['envs'])) {
+            return [
+                'ok' => false,
+                'message' => __('Status file schema is invalid: missing envs object.', 'abcnorio-func'),
+                'status' => [],
+            ];
+        }
+
+        foreach (self::envKeys() as $env) {
+            $envStatus = $decoded['envs'][$env] ?? null;
+            if (!is_array($envStatus)) {
+                return [
+                    'ok' => false,
+                    'message' => sprintf(
+                        /* translators: %s: Environment key. */
+                        __('Status file schema is invalid: missing %s env entry.', 'abcnorio-func'),
+                        $env
+                    ),
+                    'status' => [],
+                ];
+            }
+
+            $currentBuild = $envStatus['currentBuild'] ?? null;
+            if (!is_array($currentBuild) || !array_key_exists('hasBuild', $currentBuild) || !is_bool($currentBuild['hasBuild'])) {
+                return [
+                    'ok' => false,
+                    'message' => sprintf(
+                        /* translators: %s: Environment key. */
+                        __('Status file schema is invalid: %s currentBuild.hasBuild must be boolean.', 'abcnorio-func'),
+                        $env
+                    ),
+                    'status' => [],
+                ];
+            }
+
+            if (!isset($envStatus['backups']) || !is_array($envStatus['backups'])) {
+                return [
+                    'ok' => false,
+                    'message' => sprintf(
+                        /* translators: %s: Environment key. */
+                        __('Status file schema is invalid: %s backups must be array.', 'abcnorio-func'),
+                        $env
+                    ),
+                    'status' => [],
+                ];
+            }
+        }
+
+        return [
+            'ok' => true,
+            'message' => '',
+            'status' => $decoded,
+        ];
+    }
+
+    /**
+     * @return array{ok: bool, message: string, status: array<string, mixed>}
+     */
+    private static function readDeploymentStatus(): array
+    {
+        $path = self::deploymentStatusPath();
+
+        if (!is_file($path)) {
+            return [
+                'ok' => false,
+                'message' => sprintf(
+                    /* translators: %s: Status file path. */
+                    __('Deployment status file not found: %s', 'abcnorio-func'),
+                    $path
+                ),
+                'status' => [],
+            ];
+        }
+
+        if (!is_readable($path)) {
+            return [
+                'ok' => false,
+                'message' => sprintf(
+                    /* translators: %s: Status file path. */
+                    __('Deployment status file is not readable: %s', 'abcnorio-func'),
+                    $path
+                ),
+                'status' => [],
+            ];
+        }
+
+        $raw = file_get_contents($path);
+        if (!is_string($raw) || trim($raw) === '') {
+            return [
+                'ok' => false,
+                'message' => __('Deployment status file is empty.', 'abcnorio-func'),
+                'status' => [],
+            ];
+        }
+
+        $decoded = json_decode($raw, true);
+        if (!is_array($decoded)) {
+            return [
+                'ok' => false,
+                'message' => __('Deployment status file contains invalid JSON.', 'abcnorio-func'),
+                'status' => [],
+            ];
+        }
+
+        return self::validateDeploymentStatus($decoded);
     }
 
     private static function resolveBackupFile(string $requested, string $env): string
@@ -125,7 +444,12 @@ final class Deployment
             wp_die(__('Missing backup file.', 'abcnorio-func'), 400);
         }
 
-        if (!self::archiveBelongsToEnv($requested, $env)) {
+        $statusBackups = self::statusBackupNamesForEnv($env);
+        if (!$statusBackups['ok']) {
+            wp_die(__('Backup list unavailable from deployment status. Check status file health and retry.', 'abcnorio-func'), 503);
+        }
+
+        if (!in_array($requested, $statusBackups['names'], true)) {
             wp_die(__('Backup file not found.', 'abcnorio-func'), 404);
         }
 
@@ -186,8 +510,6 @@ final class Deployment
                 if (!is_dir($destPath) && !mkdir($destPath, 0775, true) && !is_dir($destPath)) {
                     return false;
                 }
-
-                @chmod($destPath, 0777);
                 continue;
             }
 
@@ -199,8 +521,6 @@ final class Deployment
             if (!copy((string) $item->getPathname(), $destPath)) {
                 return false;
             }
-
-            @chmod($destPath, 0666);
         }
 
         return true;
@@ -281,68 +601,139 @@ final class Deployment
         );
     }
 
+    public static function maybeRenderAdminNotice(): void
+    {
+        $page = sanitize_key((string) ($_GET['page'] ?? ''));
+        if ($page !== 'abcnorio-deployment') {
+            return;
+        }
+
+        $noticeType = sanitize_key((string) ($_GET['deployment_notice'] ?? ''));
+        $noticeEnv = sanitize_key((string) ($_GET['deployment_env'] ?? ''));
+        $noticeMessage = sanitize_text_field((string) ($_GET['deployment_message'] ?? ''));
+
+        if ($noticeType !== '' && $noticeMessage !== '') {
+            $class = $noticeType === 'error' ? 'notice notice-error is-dismissible' : 'notice notice-success is-dismissible';
+            printf(
+                '<div class="%1$s"><p>%2$s</p></div>',
+                esc_attr($class),
+                esc_html($noticeMessage)
+            );
+        }
+
+        $restored = sanitize_file_name((string) ($_GET['restored'] ?? ''));
+        if ($restored !== '') {
+            printf(
+                '<div class="notice notice-success is-dismissible"><p>%s</p></div>',
+                esc_html(sprintf(__('Restore completed: %s', 'abcnorio-func'), $restored))
+            );
+        }
+
+        $deployed = sanitize_key((string) ($_GET['deployed'] ?? ''));
+        if ($deployed !== '') {
+            $message = $deployed === 'production'
+                ? __('Backup and deployment complete.', 'abcnorio-func')
+                : sprintf(
+                    /* translators: %s: Environment label. */
+                    __('Deployment complete for %s.', 'abcnorio-func'),
+                    ucfirst($deployed)
+                );
+
+            printf(
+                '<div class="notice notice-success is-dismissible"><p>%s</p></div>',
+                esc_html($message)
+            );
+        }
+    }
+
+    /**
+     * @return array{statusOk: bool, statusMessage: string, targets: array<string, array{previewUrl: string, hasBuild: bool, backups: array<int, array{name: string, mtime: int}>}>}
+     */
+    private static function deploymentTargets(): array
+    {
+        $status = self::readDeploymentStatus();
+        $targets = [];
+
+        foreach (self::envKeys() as $env) {
+            $previewEnvMap = [
+                'dev' => 'DEV_FRONTEND_URL',
+                'staging' => 'STAGING_FRONTEND_URL',
+                'production' => 'PRODUCTION_FRONTEND_URL',
+            ];
+
+            $envStatus = $status['ok'] ? ($status['status']['envs'][$env] ?? []) : [];
+            $currentBuild = is_array($envStatus) ? ($envStatus['currentBuild'] ?? []) : [];
+            $hasBuild = is_array($currentBuild) && isset($currentBuild['hasBuild']) && is_bool($currentBuild['hasBuild'])
+                ? $currentBuild['hasBuild']
+                : false;
+
+            $targets[$env] = [
+                'previewUrl' => (string) (getenv($previewEnvMap[$env]) ?: ''),
+                'hasBuild' => $hasBuild,
+                'backups' => self::normalizeBackupsFromStatus($envStatus),
+            ];
+        }
+
+        return [
+            'statusOk' => $status['ok'],
+            'statusMessage' => $status['message'],
+            'targets' => $targets,
+        ];
+    }
+
     public static function enqueueAssets(string $hook): void
     {
         if ($hook !== 'toplevel_page_abcnorio-deployment') {
             return;
         }
 
+        $view = self::deploymentTargets();
         $jsUrl = plugins_url('resources/js/deployment.js', ABCNORIO_CUSTOM_FUNC_FILE);
         wp_enqueue_script('abcnorio-deployment', $jsUrl, [], '1.0.0', true);
         wp_localize_script('abcnorio-deployment', 'abcnorioDeployment', [
             'ajaxUrl'      => admin_url('admin-ajax.php'),
             'triggerNonce' => wp_create_nonce('abcnorio_trigger_build'),
             'pollNonce'    => wp_create_nonce('abcnorio_poll_build_status'),
-            'previewUrls'  => [
-                'dev'        => getenv('DEV_FRONTEND_URL') ?: '',
-                'staging'    => getenv('STAGING_FRONTEND_URL') ?: '',
-                'production' => getenv('PRODUCTION_FRONTEND_URL') ?: '',
-            ],
-            'buildExists'  => [
-                'dev'        => self::buildExists('dev'),
-                'staging'    => self::buildExists('staging'),
-                'production' => self::buildExists('production'),
-            ],
+            'targets' => $view['targets'],
+            'statusOk' => $view['statusOk'],
         ]);
-    }
-
-    private static function buildExists(string $env): bool
-    {
-        $buildPath = rtrim(getenv('STATIC_SERVER_SITE_DIR') ?: '', '/') . '/' . $env . '/client';
-        if (!is_dir($buildPath)) {
-            return false;
-        }
-
-        $entries = scandir($buildPath);
-        return is_array($entries) && count(array_diff($entries, ['.', '..'])) > 0;
     }
 
     public static function renderPage(): void
     {
-        $previewUrls = [
-            'dev'        => getenv('DEV_FRONTEND_URL') ?: '',
-            'staging'    => getenv('STAGING_FRONTEND_URL') ?: '',
-            'production' => getenv('PRODUCTION_FRONTEND_URL') ?: '',
-        ];
-        $recentBackups = [
-            'dev' => self::recentBackups('dev', 3),
-            'staging' => self::recentBackups('staging', 3),
-            'production' => self::recentBackups('production', 3),
-        ];
+        $activeTab = sanitize_key((string) ($_GET['tab'] ?? 'dev'));
+        if (!self::isValidEnv($activeTab)) {
+            $activeTab = 'dev';
+        }
+
+        $view = self::deploymentTargets();
+        $targets = $view['targets'];
+        $statusOk = $view['statusOk'];
+        $statusMessage = $view['statusMessage'];
         $backupDownloadNonce = wp_create_nonce('abcnorio_download_backup');
         $backupRestoreNonce = wp_create_nonce('abcnorio_restore_backup');
         ?>
         <div class="wrap">
             <h1><?php esc_html_e('Deployment', 'abcnorio-func'); ?></h1>
 
+            <?php if (!$statusOk) : ?>
+                <div class="notice notice-error" style="margin: 1rem 0;">
+                    <p><strong><?php esc_html_e('Deployment actions are currently blocked.', 'abcnorio-func'); ?></strong></p>
+                    <p><?php echo esc_html($statusMessage); ?></p>
+                    <p style="margin-bottom: 0;">
+                        <?php esc_html_e('Troubleshooting: verify orchestrator is running, run one successful deploy to regenerate status, then refresh this page.', 'abcnorio-func'); ?>
+                    </p>
+                </div>
+            <?php endif; ?>
+
             <nav class="nav-tab-wrapper" id="deployment-tabs">
-                <a href="#tab-dev" class="nav-tab nav-tab-active" data-tab="dev">
+                <a href="#tab-dev" class="nav-tab<?php echo $activeTab === 'dev' ? ' nav-tab-active' : ''; ?>" data-tab="dev">
                     <?php esc_html_e('Dev', 'abcnorio-func'); ?>
                 </a>
-                <a href="#tab-staging" class="nav-tab" data-tab="staging">
+                <a href="#tab-staging" class="nav-tab<?php echo $activeTab === 'staging' ? ' nav-tab-active' : ''; ?>" data-tab="staging">
                     <?php esc_html_e('Staging', 'abcnorio-func'); ?>
                 </a>
-                <a href="#tab-production" class="nav-tab" data-tab="production">
+                <a href="#tab-production" class="nav-tab<?php echo $activeTab === 'production' ? ' nav-tab-active' : ''; ?>" data-tab="production">
                     <?php esc_html_e('Production', 'abcnorio-func'); ?>
                 </a>
             </nav>
@@ -350,19 +741,20 @@ final class Deployment
             <?php foreach (['dev', 'staging'] as $env) : ?>
             <div
                 id="tab-<?php echo esc_attr($env); ?>"
-                class="deployment-tab<?php echo $env !== 'dev' ? ' hidden' : ''; ?>"
+                class="deployment-tab<?php echo $activeTab !== $env ? ' hidden' : ''; ?>"
             >
                 <div style="margin-top: 1.5rem; display: flex; gap: 1rem; align-items: center; flex-wrap: wrap;">
                     <button
                         class="button button-primary js-trigger-build"
                         data-target="<?php echo esc_attr($env); ?>"
                         data-label="<?php esc_attr_e('Run Static Build', 'abcnorio-func'); ?>"
+                        <?php disabled(!$statusOk); ?>
                     >
                         <?php esc_html_e('Run Static Build', 'abcnorio-func'); ?>
                     </button>
                     <a
-                        href="<?php echo esc_url($previewUrls[$env] ?: '#'); ?>"
-                        class="button js-preview-link<?php echo (empty($previewUrls[$env]) || !self::buildExists($env)) ? ' hidden' : ''; ?>"
+                        href="<?php echo esc_url($targets[$env]['previewUrl'] ?: '#'); ?>"
+                        class="button js-preview-link<?php echo (empty($targets[$env]['previewUrl']) || !$targets[$env]['hasBuild']) ? ' hidden' : ''; ?>"
                         data-env="<?php echo esc_attr($env); ?>"
                         target="_blank"
                         rel="noopener"
@@ -371,8 +763,8 @@ final class Deployment
                     </a>
                     <?php if ($env === 'dev') : ?>
                     <a
-                        href="<?php echo esc_url($previewUrls['dev'] ?: '#'); ?>"
-                        class="button js-live-preview-link<?php echo empty($previewUrls['dev']) ? ' hidden' : ''; ?>"
+                        href="<?php echo esc_url($targets['dev']['previewUrl'] ?: '#'); ?>"
+                        class="button js-live-preview-link<?php echo empty($targets['dev']['previewUrl']) ? ' hidden' : ''; ?>"
                         target="_blank"
                         rel="noopener"
                     >
@@ -392,13 +784,13 @@ final class Deployment
                         );
                         ?>
                     </strong>
-                    <?php if ($recentBackups[$env] === []) : ?>
+                    <?php if ($targets[$env]['backups'] === []) : ?>
                         <p style="margin: 0.5rem 0 0; color: #666;">
                             <?php esc_html_e('No backup archives found yet.', 'abcnorio-func'); ?>
                         </p>
                     <?php else : ?>
                         <ul style="margin: 0.5rem 0 0 1.25rem;">
-                            <?php foreach ($recentBackups[$env] as $backup) : ?>
+                            <?php foreach ($targets[$env]['backups'] as $backup) : ?>
                                 <li>
                                     <span><?php echo esc_html($backup['name']); ?></span>
                                     <span style="margin-left: 0.5rem; display: inline-flex; gap: 0.5rem;">
@@ -420,8 +812,10 @@ final class Deployment
                                             'nonce' => $backupRestoreNonce,
                                             'file' => rawurlencode($backup['name']),
                                         ], admin_url('admin-ajax.php'))); ?>"
-                                        class="button button-small"
+                                        class="button button-small<?php echo !$statusOk ? ' disabled' : ''; ?>"
+                                        <?php if (!$statusOk) : ?>aria-disabled="true" onclick="return false;"<?php else : ?>
                                         onclick="return confirm('<?php echo esc_js(sprintf(__('Restore this backup to %s? This replaces current files for that environment.', 'abcnorio-func'), ucfirst($env))); ?>');"
+                                        <?php endif; ?>
                                     >
                                         <?php esc_html_e('Restore', 'abcnorio-func'); ?>
                                     </a>
@@ -434,7 +828,7 @@ final class Deployment
             </div>
             <?php endforeach; ?>
 
-            <div id="tab-production" class="deployment-tab hidden">
+            <div id="tab-production" class="deployment-tab<?php echo $activeTab !== 'production' ? ' hidden' : ''; ?>">
                 <div style="margin-top: 1.5rem;">
                     <p style="color: #666; margin-bottom: 1rem;">
                         <?php esc_html_e('Backs up the current production build, then deploys the latest build to production.', 'abcnorio-func'); ?>
@@ -445,13 +839,14 @@ final class Deployment
                             data-target="production"
                             data-label="<?php esc_attr_e('Deploy to Production', 'abcnorio-func'); ?>"
                             data-confirm="<?php esc_attr_e('Deploy to production? This will replace the live site. Continue?', 'abcnorio-func'); ?>"
+                            <?php disabled(!$statusOk); ?>
                         >
                             <?php esc_html_e('Deploy to Production', 'abcnorio-func'); ?>
                         </button>
                         <span class="js-build-status" style="color: #666;"></span>
                         <a
-                            href="<?php echo esc_url($previewUrls['production'] ?: '#'); ?>"
-                            class="button js-preview-link<?php echo (empty($previewUrls['production']) || !self::buildExists('production')) ? ' hidden' : ''; ?>"
+                            href="<?php echo esc_url($targets['production']['previewUrl'] ?: '#'); ?>"
+                            class="button js-preview-link<?php echo (empty($targets['production']['previewUrl']) || !$targets['production']['hasBuild']) ? ' hidden' : ''; ?>"
                             data-env="production"
                             target="_blank"
                             rel="noopener"
@@ -462,13 +857,13 @@ final class Deployment
 
                     <div style="margin-top: 1rem;">
                         <strong><?php esc_html_e('Recent Production Backups', 'abcnorio-func'); ?></strong>
-                        <?php if ($recentBackups['production'] === []) : ?>
+                        <?php if ($targets['production']['backups'] === []) : ?>
                             <p style="margin: 0.5rem 0 0; color: #666;">
                                 <?php esc_html_e('No backup archives found yet.', 'abcnorio-func'); ?>
                             </p>
                         <?php else : ?>
                             <ul style="margin: 0.5rem 0 0 1.25rem;">
-                                <?php foreach ($recentBackups['production'] as $backup) : ?>
+                                <?php foreach ($targets['production']['backups'] as $backup) : ?>
                                     <li>
                                         <span><?php echo esc_html($backup['name']); ?></span>
                                         <span style="margin-left: 0.5rem; display: inline-flex; gap: 0.5rem;">
@@ -490,8 +885,10 @@ final class Deployment
                                                 'nonce' => $backupRestoreNonce,
                                                 'file' => rawurlencode($backup['name']),
                                             ], admin_url('admin-ajax.php'))); ?>"
-                                            class="button button-small"
-                                            onclick="return confirm('<?php echo esc_js(__('Restore this backup to production? This replaces current production files.', 'abcnorio-func')); ?>');"
+                                                class="button button-small<?php echo !$statusOk ? ' disabled' : ''; ?>"
+                                                <?php if (!$statusOk) : ?>aria-disabled="true" onclick="return false;"<?php else : ?>
+                                                onclick="return confirm('<?php echo esc_js(__('Restore this backup to production? This replaces current production files.', 'abcnorio-func')); ?>');"
+                                                <?php endif; ?>
                                         >
                                             <?php esc_html_e('Restore', 'abcnorio-func'); ?>
                                         </a>
@@ -516,12 +913,12 @@ final class Deployment
         }
 
         $target = sanitize_key($_POST['target'] ?? '');
-        if (!in_array($target, ['dev', 'staging', 'production'], true)) {
+        if (!self::isValidEnv($target)) {
             wp_send_json_error(['message' => 'Invalid target'], 400);
         }
 
-        $triggerUrl = rtrim(getenv('ASTRO_BUILD_TRIGGER_URL') ?: 'http://astro:3034', '/');
-        $secret     = getenv('ASTRO_BUILD_TRIGGER_SECRET') ?: '';
+        $triggerUrl = self::orchestratorBaseUrl();
+        $secret     = self::orchestratorSecret();
 
         $response = wp_remote_post("{$triggerUrl}/trigger", [
             'headers' => [
@@ -558,8 +955,8 @@ final class Deployment
             wp_send_json_error(['message' => 'Insufficient permissions'], 403);
         }
 
-        $triggerUrl = rtrim(getenv('ASTRO_BUILD_TRIGGER_URL') ?: 'http://astro:3034', '/');
-        $secret     = getenv('ASTRO_BUILD_TRIGGER_SECRET') ?: '';
+        $triggerUrl = self::orchestratorBaseUrl();
+        $secret     = self::orchestratorSecret();
 
         $response = wp_remote_get("{$triggerUrl}/status", [
             'headers' => ['Authorization' => "Bearer {$secret}"],
@@ -586,7 +983,7 @@ final class Deployment
         }
 
         $env = sanitize_key((string) ($_GET['env'] ?? ''));
-        if (!in_array($env, ['dev', 'staging', 'production'], true)) {
+        if (!self::isValidEnv($env)) {
             wp_die(__('Invalid backup environment.', 'abcnorio-func'), 400);
         }
 
@@ -614,7 +1011,7 @@ final class Deployment
         }
 
         $env = sanitize_key((string) ($_GET['env'] ?? ''));
-        if (!in_array($env, ['dev', 'staging', 'production'], true)) {
+        if (!self::isValidEnv($env)) {
             wp_die(__('Invalid backup environment.', 'abcnorio-func'), 400);
         }
 
@@ -657,15 +1054,12 @@ final class Deployment
             wp_die(__('Archive structure is invalid for restore.', 'abcnorio-func'), 500);
         }
 
-        @chmod($targetDir, 0777);
         self::rrmdirContents($targetDir);
         if (!self::copyDirRecursive($extractedSource, $targetDir)) {
             self::rrmdirContents($tempDir);
             @rmdir($tempDir);
             wp_die(__('Restore failed while copying files.', 'abcnorio-func'), 500);
         }
-
-        @chmod($targetDir, 0777);
 
         self::rrmdirContents($tempDir);
         @rmdir($tempDir);

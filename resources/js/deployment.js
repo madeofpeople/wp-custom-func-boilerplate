@@ -1,6 +1,6 @@
 /* global abcnorioDeployment */
 (function () {
-    const { ajaxUrl, triggerNonce, pollNonce, previewUrls, buildExists = {} } = abcnorioDeployment;
+    const { ajaxUrl, triggerNonce, pollNonce, targets = {} } = abcnorioDeployment;
 
     let pollTimer = null;
     let buildStartTime = null;
@@ -71,11 +71,45 @@
         buildStartTime = null;
     }
 
+    function showAdminNotice(message, type = 'success') {
+        const wrap = document.querySelector('.wrap');
+        if (!wrap) return;
+
+        const notice = document.createElement('div');
+        notice.className = 'notice notice-' + type + ' is-dismissible';
+        notice.innerHTML = '<p>' + message + '</p>';
+        wrap.insertBefore(notice, wrap.firstChild);
+    }
+
+    function redirectToDeploymentNotice(envKey, type = 'success', message = '') {
+        const url = new URL(window.location.href);
+        url.searchParams.set('page', 'abcnorio-deployment');
+        url.searchParams.set('tab', envKey);
+        url.searchParams.set('deployment_notice', type);
+        url.searchParams.set('deployment_env', envKey);
+        if (message) {
+            url.searchParams.set('deployment_message', message);
+        } else {
+            url.searchParams.delete('deployment_message');
+        }
+
+        if (type === 'success') {
+            url.searchParams.set('deployed', envKey);
+        } else {
+            url.searchParams.delete('deployed');
+        }
+
+        url.searchParams.delete('restored');
+        window.location.assign(url.toString());
+    }
+
     function showPreview(envKey, panel) {
         const link = panel.querySelector('.js-preview-link');
-        const url  = previewUrls[envKey];
+        const url  = targets[envKey] && targets[envKey].previewUrl;
         if (link && url) {
-            buildExists[envKey] = true;
+            if (targets[envKey]) {
+                targets[envKey].hasBuild = true;
+            }
             link.href = url;
             link.classList.remove('hidden');
         }
@@ -84,9 +118,9 @@
     function initializePreviewLinks() {
         document.querySelectorAll('.js-preview-link').forEach((link) => {
             const env = link.dataset.env;
-            const url = previewUrls[env];
-            if (url && buildExists[env]) {
-                link.href = url;
+            const target = targets[env] || {};
+            if (target.previewUrl && target.hasBuild) {
+                link.href = target.previewUrl;
                 link.classList.remove('hidden');
             }
         });
@@ -119,13 +153,25 @@
                         stopPolling();
                         stopTimer();
                         setButtonIdle(btn);
-                        setStatus(panel, 'Build complete.');
+                        const doneMessage = envKey === 'production'
+                            ? 'Backup and deployment complete.'
+                            : 'Build complete.';
+                        setStatus(panel, doneMessage);
+                        if (envKey === 'production') {
+                            redirectToDeploymentNotice(envKey);
+                            return;
+                        }
+                        showAdminNotice(doneMessage, 'success');
                         showPreview(envKey, panel);
                     } else if (st.status === 'failed') {
                         stopPolling();
                         stopTimer();
                         setButtonIdle(btn);
-                        setStatus(panel, 'Build failed — check server logs.');
+                        const failedMessage = envKey === 'production'
+                            ? 'Backup and deployment failed. Check server logs.'
+                            : 'Build failed. Check server logs.';
+                        setStatus(panel, failedMessage);
+                        redirectToDeploymentNotice(envKey, 'error', failedMessage);
                     }
                 })
                 .catch(() => {
@@ -158,8 +204,10 @@
                 .then((r) => r.json())
                 .then((data) => {
                     if (!data.success) {
+                        const errorMessage = data.data && data.data.message ? data.data.message : 'unknown error';
                         setButtonIdle(btn);
-                        setStatus(panel, 'Error: ' + (data.data && data.data.message ? data.data.message : 'unknown error'));
+                        setStatus(panel, 'Error: ' + errorMessage);
+                        redirectToDeploymentNotice(target, 'error', 'Could not start ' + (target === 'production' ? 'deployment' : 'build') + ': ' + errorMessage);
                         return;
                     }
 
@@ -170,6 +218,7 @@
                     stopTimer();
                     setButtonIdle(btn);
                     setStatus(panel, 'Request failed.');
+                    redirectToDeploymentNotice(target, 'error', 'Request failed while starting ' + (target === 'production' ? 'deployment' : 'build') + '.');
                 });
         });
     });
