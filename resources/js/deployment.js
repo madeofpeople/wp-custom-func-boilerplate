@@ -1,6 +1,6 @@
 /* global abcnorioDeployment */
 (function () {
-    const { ajaxUrl, triggerNonce, pollNonce, previewUrls } = abcnorioDeployment;
+    const { ajaxUrl, triggerNonce, pollNonce, previewUrls, buildExists = {} } = abcnorioDeployment;
 
     let pollTimer = null;
     let buildStartTime = null;
@@ -75,9 +75,21 @@
         const link = panel.querySelector('.js-preview-link');
         const url  = previewUrls[envKey];
         if (link && url) {
+            buildExists[envKey] = true;
             link.href = url;
             link.classList.remove('hidden');
         }
+    }
+
+    function initializePreviewLinks() {
+        document.querySelectorAll('.js-preview-link').forEach((link) => {
+            const env = link.dataset.env;
+            const url = previewUrls[env];
+            if (url && buildExists[env]) {
+                link.href = url;
+                link.classList.remove('hidden');
+            }
+        });
     }
 
     function stopPolling() {
@@ -122,6 +134,8 @@
         }, 2500);
     }
 
+    initializePreviewLinks();
+
     // --- Build trigger ---
     document.querySelectorAll('.js-trigger-build').forEach((btn) => {
         btn.addEventListener('click', () => {
@@ -140,16 +154,6 @@
                 target,
             });
 
-                       // --- Initialize preview visibility ---
-                       const { buildExists } = abcnorioDeployment;
-                       if (buildExists) {
-                           document.querySelectorAll('.js-preview-link').forEach((link) => {
-                               const env = link.dataset.env;
-                               if (buildExists[env]) {
-                                   link.classList.remove('hidden');
-                               }
-                           });
-                       }
             fetch(ajaxUrl, { method: 'POST', body })
                 .then((r) => r.json())
                 .then((data) => {
