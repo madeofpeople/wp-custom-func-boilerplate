@@ -216,6 +216,8 @@ final class SaveTrigger
             return;
         }
 
+        wp_cache_flush();
+
         $scope = self::scopeForPostType((string) $resolvedPost->post_type, $resolvedPost);
         self::enqueue('save_post', $scope);
     }
@@ -226,6 +228,8 @@ final class SaveTrigger
         if (!$resolvedPost instanceof \WP_Post) {
             return;
         }
+
+        wp_cache_flush();
 
         $scope = self::scopeForPostType((string) $resolvedPost->post_type, $resolvedPost);
         self::enqueue('before_delete_post', $scope);

@@ -71,7 +71,9 @@ final class DeploymentActions
         }
 
         if ($code !== 202) {
-            wp_send_json_error(['message' => 'Trigger failed', 'detail' => $body], $code);
+            $orchestratorMessage = is_array($body) ? (string) ($body['error'] ?? $body['message'] ?? '') : '';
+            $errorMessage = $orchestratorMessage !== '' ? 'Trigger failed: ' . $orchestratorMessage : 'Trigger failed (HTTP ' . $code . ')';
+            wp_send_json_error(['message' => $errorMessage, 'detail' => $body], $code);
         }
 
         wp_send_json_success($body);

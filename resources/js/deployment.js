@@ -167,9 +167,11 @@
                         stopPolling();
                         stopTimer();
                         setButtonIdle(btn);
-                        const failedMessage = envKey === 'production'
-                            ? 'Backup and deployment failed. Check server logs.'
-                            : 'Build failed. Check server logs.';
+                        const baseMessage = envKey === 'production'
+                            ? 'Backup and deployment failed.'
+                            : 'Build failed.';
+                        const detail = st.message ? ' ' + st.message : ' Check server logs.';
+                        const failedMessage = baseMessage + detail;
                         setStatus(panel, failedMessage);
                         redirectToDeploymentNotice(envKey, 'error', failedMessage);
                     }
