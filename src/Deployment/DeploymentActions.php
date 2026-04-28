@@ -200,4 +200,71 @@ final class DeploymentActions
         wp_safe_redirect($redirect);
         exit;
     }
+
+    public static function deleteBackup(): void
+    {
+        $nonce = sanitize_text_field((string) ($_POST['nonce'] ?? ''));
+        if (!wp_verify_nonce($nonce, 'abcnorio_delete_backup')) {
+            wp_die(__('Invalid request.', 'abcnorio-func'), 403);
+        }
+
+        if (!current_user_can('manage_options')) {
+            wp_die(__('Insufficient permissions.', 'abcnorio-func'), 403);
+        }
+
+        $env = sanitize_key((string) ($_POST['env'] ?? ''));
+        if (!Deployment::isValidEnv($env)) {
+            wp_die(__('Invalid backup environment.', 'abcnorio-func'), 400);
+        }
+
+        $requested = sanitize_file_name((string) ($_POST['file'] ?? ''));
+        // Validate the file exists in the backup list before asking the orchestrator.
+        self::resolveBackupFile($requested, $env);
+
+        $response = wp_remote_post(Deployment::orchestratorBaseUrl() . '/delete-backup', [
+            'headers' => [
+                'Content-Type'  => 'application/json',
+                'Authorization' => 'Bearer ' . Deployment::orchestratorSecret(),
+            ],
+            'body'    => wp_json_encode(['target' => $env, 'file' => $requested]),
+            'timeout' => 15,
+        ]);
+
+        if (is_wp_error($response)) {
+            wp_die(
+                sprintf(
+                    /* translators: %s: Network error details. */
+                    __('Delete request failed: %s', 'abcnorio-func'),
+                    $response->get_error_message()
+                ),
+                502
+            );
+        }
+
+        $statusCode = wp_remote_retrieve_response_code($response);
+        if ($statusCode < 200 || $statusCode >= 300) {
+            $body = json_decode((string) wp_remote_retrieve_body($response), true);
+            $message = is_array($body) ? (string) ($body['message'] ?? $body['error'] ?? '') : '';
+            wp_die(
+                $message !== ''
+                    ? sprintf(
+                        /* translators: %s: Delete failure message from orchestrator. */
+                        __('Delete failed: %s', 'abcnorio-func'),
+                        $message
+                    )
+                    : __('Delete failed.', 'abcnorio-func'),
+                502
+            );
+        }
+
+        $redirect = add_query_arg(
+            [
+                'page' => 'abcnorio-deployment',
+                'tab'  => $env,
+            ],
+            admin_url('admin.php')
+        );
+        wp_safe_redirect($redirect);
+        exit;
+    }
 }

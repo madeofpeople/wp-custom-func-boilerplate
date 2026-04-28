@@ -6,7 +6,7 @@ final class Deployment
 {
     public static function envKeys(): array
     {
-        return ['dev', 'staging', 'production'];
+        return ['dev', 'staging', 'production', 'preview'];
     }
 
     public static function isValidEnv(string $env): bool
@@ -34,5 +34,6 @@ final class Deployment
         add_action('wp_ajax_abcnorio_poll_build_status', [DeploymentActions::class, 'pollBuildStatus']);
         add_action('wp_ajax_abcnorio_download_backup', [DeploymentActions::class, 'downloadBackup']);
         add_action('wp_ajax_abcnorio_restore_backup', [DeploymentActions::class, 'restoreBackup']);
+        add_action('wp_ajax_abcnorio_delete_backup', [DeploymentActions::class, 'deleteBackup']);
     }
 }

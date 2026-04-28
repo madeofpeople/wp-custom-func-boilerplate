@@ -103,8 +103,61 @@
         window.location.assign(url.toString());
     }
 
+    function getProductionFirstBackupName() {
+        const list = document.querySelector('#tab-production .js-backup-list');
+        if (!list) return '';
+        const first = list.querySelector('li .backup-item-name');
+        if (!first) return '';
+        return (first.textContent || '').trim();
+    }
+
+    function markPendingBackupHighlight() {
+        try {
+            const previousFirst = getProductionFirstBackupName();
+            sessionStorage.setItem('abcnorio.pendingBackupHighlight', '1');
+            sessionStorage.setItem('abcnorio.previousProductionFirstBackup', previousFirst);
+        } catch {
+            // ignore storage issues
+        }
+    }
+
+    function maybeHighlightNewBackup() {
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('deployed') !== 'production') return;
+
+        let pending = '';
+        let previousFirst = '';
+        try {
+            pending = sessionStorage.getItem('abcnorio.pendingBackupHighlight') || '';
+            previousFirst = sessionStorage.getItem('abcnorio.previousProductionFirstBackup') || '';
+        } catch {
+            return;
+        }
+
+        if (pending !== '1') {
+            return;
+        }
+
+        const list = document.querySelector('#tab-production .js-backup-list');
+        if (!list) return;
+
+        const firstItem = list.querySelector('li');
+        const firstNameEl = list.querySelector('li .backup-item-name');
+        const currentFirst = firstNameEl ? (firstNameEl.textContent || '').trim() : '';
+        if (firstItem && currentFirst && currentFirst !== previousFirst) {
+            firstItem.classList.add('backup-item-new');
+        }
+
+        try {
+            sessionStorage.removeItem('abcnorio.pendingBackupHighlight');
+            sessionStorage.removeItem('abcnorio.previousProductionFirstBackup');
+        } catch {
+            // ignore storage issues
+        }
+    }
+
     function showPreview(envKey, panel) {
-        const link = panel.querySelector('.js-preview-link');
+        const link = panel.querySelector('.js-preview-link[data-env="' + envKey + '"]');
         const url  = targets[envKey] && targets[envKey].previewUrl;
         if (link && url) {
             if (targets[envKey]) {
@@ -150,25 +203,40 @@
                     const st = data.data;
 
                     if (st.status === 'done') {
+                        if (st.target && st.target !== envKey) {
+                            return;
+                        }
                         stopPolling();
                         stopTimer();
                         setButtonIdle(btn);
                         const doneMessage = envKey === 'production'
                             ? 'Backup and deployment complete.'
-                            : 'Build complete.';
+                            : envKey === 'preview'
+                                ? 'Production preview build complete.'
+                                : 'Build complete.';
                         setStatus(panel, doneMessage);
+                        setTimeout(() => setStatus(panel, ''), 5000);
                         if (envKey === 'production') {
                             redirectToDeploymentNotice(envKey);
+                            return;
+                        }
+                        if (envKey === 'preview') {
+                            redirectToDeploymentNotice('production', 'success', doneMessage);
                             return;
                         }
                         showAdminNotice(doneMessage, 'success');
                         showPreview(envKey, panel);
                     } else if (st.status === 'failed') {
+                        if (st.target && st.target !== envKey) {
+                            return;
+                        }
                         stopPolling();
                         stopTimer();
                         setButtonIdle(btn);
                         const baseMessage = envKey === 'production'
                             ? 'Backup and deployment failed.'
+                            : envKey === 'preview'
+                                ? 'Production preview build failed.'
                             : 'Build failed.';
                         const detail = st.message ? ' ' + st.message : ' Check server logs.';
                         const failedMessage = baseMessage + detail;
@@ -184,6 +252,9 @@
 
     initializePreviewLinks();
 
+    // Highlight only after build-complete redirect when backup list actually changed.
+    maybeHighlightNewBackup();
+
     // --- Build trigger ---
     document.querySelectorAll('.js-trigger-build').forEach((btn) => {
         btn.addEventListener('click', () => {
@@ -192,6 +263,10 @@
 
             const target = btn.dataset.target;
             const panel  = btn.closest('.deployment-tab');
+
+            if (target === 'production' || target === 'preview') {
+                markPendingBackupHighlight();
+            }
 
             setButtonRunning(btn);
             setStatus(panel, 'Starting build\u2026');

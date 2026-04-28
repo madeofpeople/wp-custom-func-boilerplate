@@ -27,6 +27,7 @@ final class DeploymentStatus
             'dev'        => 'DEV_BUILD_PATH',
             'staging'    => 'STAGING_BUILD_PATH',
             'production' => 'PRODUCTION_BUILD_PATH',
+            'preview'    => 'PREVIEW_BUILD_PATH',
         ];
 
         $envKey = $envKeyMap[$env] ?? null;
@@ -37,19 +38,12 @@ final class DeploymentStatus
             }
         }
 
-        if ($env === 'production') {
-            $configured = trim((string) (getenv('ASTRO_PRODUCTION_BUILD_DIR') ?: ''));
-            if ($configured !== '') {
-                return rtrim($configured, '/');
-            }
-        }
-
         $staticRoot = rtrim((string) (getenv('STATIC_SERVER_SITE_DIR') ?: ''), '/');
         if ($staticRoot === '') {
             return '';
         }
 
-        $dirNameMap = ['dev' => 'dev', 'staging' => 'staging', 'production' => 'prod'];
+        $dirNameMap = ['dev' => 'dev', 'staging' => 'staging', 'production' => 'prod', 'preview' => 'preview'];
         $dirName = $dirNameMap[$env] ?? null;
         return $dirName !== null ? $staticRoot . '/' . $dirName : '';
     }
