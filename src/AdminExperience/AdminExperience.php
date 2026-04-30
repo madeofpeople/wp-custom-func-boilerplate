@@ -6,6 +6,7 @@ final class AdminExperience
 {
     public static function registerHooks(): void
     {
+        AllowedBlocks::registerHooks();
         TaxonomyColumnSorter::registerHooks();
         ListTableTermEditor::registerHooks();
         add_action('admin_menu', [self::class, 'customizeAdminMenu']);
@@ -97,7 +98,7 @@ final class AdminExperience
 
     public static function enqueueEditorTokens(): void
     {
-        $relativePath = 'build/deploy-dashboard.css';
+        $relativePath = 'resources/css/admin-styles.css';
         $absolutePath = plugin_dir_path(ABCNORIO_CUSTOM_FUNC_FILE) . $relativePath;
 
         if (! file_exists($absolutePath)) {

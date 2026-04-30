@@ -15,6 +15,7 @@ use abcnorio\CustomFunc\RestApi\EventQueryFilters;
 use abcnorio\CustomFunc\RestApi\ICalEndpoint;
 use abcnorio\CustomFunc\Search\SearchEndpoint;
 use abcnorio\CustomFunc\Security\CapabilityManager;
+use abcnorio\CustomFunc\Dashboard\Dashboard;
 
 final class Plugin
 {
@@ -29,6 +30,7 @@ final class Plugin
     public static function boot(): void
     {
         AdminExperience::registerHooks();
+        Dashboard::registerHooks();
         Deployment::registerHooks();
         EventQueryFilters::registerHooks();
         ICalEndpoint::registerHooks();
@@ -41,6 +43,7 @@ final class Plugin
         add_action('enqueue_block_editor_assets', [self::class, 'enqueueEditorAssets']);
         add_action('admin_init', [CapabilityManager::class, 'maybeMigrateCapabilities'], 1);
         add_action('init', [self::class, 'registerContentModels']);
+        add_action('init', [self::class, 'registerCacheGroups']);
         add_action('init', [self::class, 'disableComments'], 15);
         add_action('init', [TaxonomyTermSeeder::class, 'maybeSeedDefaults'], 20);
         add_action('init', [CollectivePostSeeder::class, 'maybeSeedDefaults'], 30);
@@ -53,6 +56,11 @@ final class Plugin
         $taxonomies = require __DIR__ . '/ContentModel/taxonomies.php';
         PostTypeRegistrar::registerMany($postTypes);
         TaxonomyRegistrar::registerMany($taxonomies);
+    }
+
+    public static function registerCacheGroups(): void
+    {
+        wp_cache_add_global_groups([\abcnorio\CustomFunc\Search\SearchEndpoint::CACHE_GROUP]);
     }
 
     public static function enableFeaturedImages(): void

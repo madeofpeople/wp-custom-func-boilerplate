@@ -323,6 +323,62 @@ final class DeploymentActions
         }
 
         $body = json_decode(wp_remote_retrieve_body($response), true);
+        $pushStatus = is_array($body) ? ($body['push'] ?? $body) : $body;
+        wp_send_json_success($pushStatus);
+    }
+
+    public static function copyMediaToDev(): void
+    {
+        check_ajax_referer('abcnorio_copy_media_to_dev', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Insufficient permissions'], 403);
+        }
+
+        $response = wp_remote_post(Deployment::orchestratorBaseUrl() . '/dev-tools/copy-media-to-dev', [
+            'headers' => ['Authorization' => 'Bearer ' . Deployment::orchestratorSecret()],
+            'timeout' => 10,
+        ]);
+
+        if (is_wp_error($response)) {
+            wp_send_json_error(['message' => $response->get_error_message()], 502);
+        }
+
+        $code = wp_remote_retrieve_response_code($response);
+        $body = json_decode(wp_remote_retrieve_body($response), true);
+
+        if ($code === 409) {
+            wp_send_json_error(['message' => 'Copy already in progress'], 409);
+        }
+
+        if ($code !== 202) {
+            $orchestratorMessage = is_array($body) ? (string) ($body['error'] ?? $body['message'] ?? '') : '';
+            $errorMessage = $orchestratorMessage !== '' ? 'Copy failed: ' . $orchestratorMessage : 'Copy failed (HTTP ' . $code . ')';
+            wp_send_json_error(['message' => $errorMessage], $code);
+        }
+
         wp_send_json_success($body);
+    }
+
+    public static function pollCopyMediaStatus(): void
+    {
+        check_ajax_referer('abcnorio_poll_copy_media_status', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Insufficient permissions'], 403);
+        }
+
+        $response = wp_remote_get(Deployment::orchestratorBaseUrl() . '/dev-tools/status', [
+            'headers' => ['Authorization' => 'Bearer ' . Deployment::orchestratorSecret()],
+            'timeout' => 5,
+        ]);
+
+        if (is_wp_error($response)) {
+            wp_send_json_error(['message' => $response->get_error_message()], 502);
+        }
+
+        $body = json_decode(wp_remote_retrieve_body($response), true);
+        $copyStatus = is_array($body) ? ($body['copyMedia'] ?? []) : [];
+        wp_send_json_success($copyStatus);
     }
 }

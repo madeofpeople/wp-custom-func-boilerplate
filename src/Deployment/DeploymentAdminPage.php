@@ -110,6 +110,8 @@ final class DeploymentAdminPage
             'pollNonce'           => wp_create_nonce('abcnorio_poll_build_status'),
             'pushToStagingNonce'  => wp_create_nonce('abcnorio_push_to_staging'),
             'pollPushNonce'       => wp_create_nonce('abcnorio_poll_push_status'),
+            'copyMediaNonce'      => wp_create_nonce('abcnorio_copy_media_to_dev'),
+            'pollCopyMediaNonce'  => wp_create_nonce('abcnorio_poll_copy_media_status'),
             'targets'             => $view['targets'],
             'statusOk'            => $view['statusOk'],
         ]);
@@ -162,8 +164,7 @@ final class DeploymentAdminPage
                 <div style="margin-top: 1.5rem;">
                     <a
                         href="<?php echo esc_url($targets[$env]['previewUrl'] ?: '#'); ?>"
-                        class="button"
-                        target="_blank"
+                        class="button button-primary"
                         rel="noopener"
                         <?php echo empty($targets[$env]['previewUrl']) ? 'hidden' : ''; ?>
                     >
@@ -177,13 +178,25 @@ final class DeploymentAdminPage
                 <div style="margin-top: 1.5rem;">
                     <span class="js-push-status" style="color: #666; display: block; margin-bottom: 0.5rem;"></span>
                     <button
-                        class="button js-push-to-staging"
+                        class="button button-primary js-push-to-staging"
                         data-label="<?php esc_attr_e('Push Code to Staging', 'abcnorio-func'); ?>"
                     >
                         <?php esc_html_e('Push Code to Staging', 'abcnorio-func'); ?>
                     </button>
                     <p style="margin: 0.75rem 0 0; color: #666; font-size: 0.875em;">
                         <em><?php esc_html_e('Copies dev source to staging. Staging frontend picks up changes via HMR. Restart astro-staging if package.json changed.', 'abcnorio-func'); ?></em>
+                    </p>
+                </div>
+                <div style="margin-top: 1.5rem;">
+                    <span class="js-copy-media-status" style="color: #666; display: block; margin-bottom: 0.5rem;"></span>
+                    <button
+                        class="button button-primary js-copy-media-to-dev"
+                        data-label="<?php esc_attr_e('Copy Staging Media to Dev', 'abcnorio-func'); ?>"
+                    >
+                        <?php esc_html_e('Copy Staging Media to Dev', 'abcnorio-func'); ?>
+                    </button>
+                    <p style="margin: 0.75rem 0 0; color: #666; font-size: 0.875em;">
+                        <em><?php esc_html_e('Syncs staging WordPress uploads to dev. Existing dev media is overwritten.', 'abcnorio-func'); ?></em>
                     </p>
                 </div>
                 <?php endif; ?>
