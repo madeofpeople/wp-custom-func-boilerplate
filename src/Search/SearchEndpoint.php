@@ -6,7 +6,7 @@ final class SearchEndpoint
 {
     private const NAMESPACE = 'abcnorio/v1';
     private const ROUTE     = '/search';
-    private const CACHE_GROUP = 'abcnorio_search';
+    public const CACHE_GROUP = 'abcnorio_search';
     private const CACHE_TTL = 120;
     private const CACHE_VERSION_SEED = 'v1';
     private const CACHE_VERSION_OPTION = 'abcnorio_search_cache_version';
