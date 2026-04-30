@@ -256,6 +256,22 @@
     // Highlight only after build-complete redirect when backup list actually changed.
     maybeHighlightNewBackup();
 
+    // Strip transient notice params from the URL so a page reload doesn't re-show them.
+    (function stripNoticeParams() {
+        const url = new URL(window.location.href);
+        const noticeParams = ['deployment_notice', 'deployment_message', 'deployed', 'restored'];
+        let changed = false;
+        noticeParams.forEach((p) => {
+            if (url.searchParams.has(p)) {
+                url.searchParams.delete(p);
+                changed = true;
+            }
+        });
+        if (changed) {
+            history.replaceState(null, '', url.toString());
+        }
+    }());
+
     // --- Build trigger ---
     document.querySelectorAll('.js-trigger-build').forEach((btn) => {
         btn.addEventListener('click', () => {
