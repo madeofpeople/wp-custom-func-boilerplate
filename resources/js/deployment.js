@@ -1,6 +1,6 @@
 /* global abcnorioDeployment */
 (function () {
-    const { ajaxUrl, triggerNonce, pollNonce, pushToStagingNonce, pollPushNonce, targets = {} } = abcnorioDeployment;
+    const { ajaxUrl, triggerNonce, pollNonce, pushToStagingNonce, pollPushNonce, copyMediaNonce, pollCopyMediaNonce, targets = {} } = abcnorioDeployment;
 
     let pollTimer = null;
     let pushPollTimer = null;
@@ -354,6 +354,67 @@
                 })
                 .catch(() => {
                     setButtonIdle(pushBtn);
+                    if (statusEl) statusEl.textContent = 'Request failed.';
+                });
+        });
+    }
+
+    // --- Copy staging media to dev ---
+    const copyMediaBtn = document.querySelector('.js-copy-media-to-dev');
+    if (copyMediaBtn) {
+        let copyMediaPollTimer = null;
+
+        copyMediaBtn.addEventListener('click', () => {
+            const panel = copyMediaBtn.closest('.deployment-tab');
+            const statusEl = panel && panel.querySelector('.js-copy-media-status');
+
+            setButtonRunning(copyMediaBtn);
+            if (statusEl) statusEl.textContent = 'Copying…';
+
+            const body = new URLSearchParams({
+                action: 'abcnorio_copy_media_to_dev',
+                nonce: copyMediaNonce,
+            });
+
+            fetch(ajaxUrl, { method: 'POST', body })
+                .then((r) => r.json())
+                .then((data) => {
+                    if (!data.success) {
+                        setButtonIdle(copyMediaBtn);
+                        const msg = data.data && data.data.message ? data.data.message : 'Unknown error';
+                        if (statusEl) statusEl.textContent = 'Error: ' + msg;
+                        return;
+                    }
+
+                    if (copyMediaPollTimer) clearInterval(copyMediaPollTimer);
+                    copyMediaPollTimer = setInterval(() => {
+                        const pollBody = new URLSearchParams({
+                            action: 'abcnorio_poll_copy_media_status',
+                            nonce: pollCopyMediaNonce,
+                        });
+                        fetch(ajaxUrl, { method: 'POST', body: pollBody })
+                            .then((r) => r.json())
+                            .then((pollData) => {
+                                if (!pollData.success) return;
+                                const st = pollData.data;
+                                if (st.status === 'done') {
+                                    clearInterval(copyMediaPollTimer);
+                                    copyMediaPollTimer = null;
+                                    setButtonIdle(copyMediaBtn);
+                                    if (statusEl) statusEl.textContent = st.message || 'Copy complete.';
+                                    setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 5000);
+                                } else if (st.status === 'failed') {
+                                    clearInterval(copyMediaPollTimer);
+                                    copyMediaPollTimer = null;
+                                    setButtonIdle(copyMediaBtn);
+                                    if (statusEl) statusEl.textContent = 'Copy failed: ' + (st.message || 'check logs.');
+                                }
+                            })
+                            .catch(() => { /* network hiccup — keep polling */ });
+                    }, 2000);
+                })
+                .catch(() => {
+                    setButtonIdle(copyMediaBtn);
                     if (statusEl) statusEl.textContent = 'Request failed.';
                 });
         });
