@@ -3,7 +3,6 @@
 
 # Build output and package managers
 build/
-!build/deploy-dashboard.css
 node_modules/
 vendor/
 .yarn/
