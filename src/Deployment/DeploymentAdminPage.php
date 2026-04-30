@@ -45,7 +45,7 @@ final class DeploymentAdminPage
         }
 
         $deployed = sanitize_key((string) ($_GET['deployed'] ?? ''));
-        if ($deployed !== '') {
+        if ($deployed !== '' && $noticeMessage === '') {
             $message = $deployed === 'production'
                 ? __('Backup and deployment complete.', 'abcnorio-func')
                 : sprintf(
@@ -103,16 +103,22 @@ final class DeploymentAdminPage
 
         $view = self::deploymentTargets();
         $jsUrl = plugins_url('resources/js/deployment.js', ABCNORIO_CUSTOM_FUNC_FILE);
-        wp_enqueue_script('abcnorio-deployment', $jsUrl, [], '1.0.1', true);
+        wp_enqueue_script('abcnorio-deployment', $jsUrl, [], '1.0.2', true);
         wp_localize_script('abcnorio-deployment', 'abcnorioDeployment', [
             'ajaxUrl'             => admin_url('admin-ajax.php'),
             'triggerNonce'        => wp_create_nonce('abcnorio_trigger_build'),
             'pollNonce'           => wp_create_nonce('abcnorio_poll_build_status'),
             'pushToStagingNonce'  => wp_create_nonce('abcnorio_push_to_staging'),
             'pollPushNonce'       => wp_create_nonce('abcnorio_poll_push_status'),
-            'copyMediaNonce'      => wp_create_nonce('abcnorio_copy_media_to_dev'),
-            'pollCopyMediaNonce'  => wp_create_nonce('abcnorio_poll_copy_media_status'),
-            'targets'             => $view['targets'],
+            'copyMediaNonce'           => wp_create_nonce('abcnorio_copy_media_to_dev'),
+            'pollCopyMediaNonce'        => wp_create_nonce('abcnorio_poll_copy_media_status'),
+            'pullFromStagingNonce'               => wp_create_nonce('abcnorio_pull_from_staging'),
+            'pollPullFromStagingNonce'             => wp_create_nonce('abcnorio_poll_pull_from_staging_status'),
+            'copyMediaToStagingNonce'              => wp_create_nonce('abcnorio_copy_media_to_staging'),
+            'pollCopyMediaToStagingNonce'          => wp_create_nonce('abcnorio_poll_copy_media_to_staging_status'),
+            'pullFromDevNonce'                     => wp_create_nonce('abcnorio_pull_from_dev'),
+            'pollPullFromDevNonce'                 => wp_create_nonce('abcnorio_poll_pull_from_dev_status'),
+            'targets'                  => $view['targets'],
             'statusOk'            => $view['statusOk'],
         ]);
     }
@@ -188,12 +194,50 @@ final class DeploymentAdminPage
                     </p>
                 </div>
                 <div style="margin-top: 1.5rem;">
+                    <span class="js-pull-from-dev-status" style="color: #666; display: block; margin-bottom: 0.5rem;"></span>
+                    <button
+                        class="button button-primary js-pull-from-dev"
+                        data-label="<?php esc_attr_e('Push Data to Staging', 'abcnorio-func'); ?>"
+                    >
+                        <?php esc_html_e('Push Data to Staging', 'abcnorio-func'); ?>
+                    </button>
+                    <p style="margin: 0.75rem 0 0; color: #666; font-size: 0.875em;">
+                        <em><?php esc_html_e('Copies dev database and uploads to staging. Overwrites all staging content.', 'abcnorio-func'); ?></em>
+                    </p>
+                </div>
+                <div style="margin-top: 1.5rem;">
+                    <span class="js-copy-media-to-staging-status" style="color: #666; display: block; margin-bottom: 0.5rem;"></span>
+                    <button
+                        class="button button-primary js-copy-media-to-staging"
+                        data-label="<?php esc_attr_e('Push Media to Staging', 'abcnorio-func'); ?>"
+                    >
+                        <?php esc_html_e('Push Media to Staging', 'abcnorio-func'); ?>
+                    </button>
+                    <p style="margin: 0.75rem 0 0; color: #666; font-size: 0.875em;">
+                        <em><?php esc_html_e('Syncs dev WordPress uploads to staging. Existing staging media is overwritten.', 'abcnorio-func'); ?></em>
+                    </p>
+                </div>
+                <?php endif; ?>
+                <?php if ($env === 'staging') : ?>
+                <div style="margin-top: 1.5rem;">
+                    <span class="js-pull-from-staging-status" style="color: #666; display: block; margin-bottom: 0.5rem;"></span>
+                    <button
+                        class="button button-primary js-pull-from-staging"
+                        data-label="<?php esc_attr_e('Push Data to Dev', 'abcnorio-func'); ?>"
+                    >
+                        <?php esc_html_e('Push Data to Dev', 'abcnorio-func'); ?>
+                    </button>
+                    <p style="margin: 0.75rem 0 0; color: #666; font-size: 0.875em;">
+                        <em><?php esc_html_e('Copies staging database and uploads to dev. Overwrites all dev content.', 'abcnorio-func'); ?></em>
+                    </p>
+                </div>
+                <div style="margin-top: 1.5rem;">
                     <span class="js-copy-media-status" style="color: #666; display: block; margin-bottom: 0.5rem;"></span>
                     <button
                         class="button button-primary js-copy-media-to-dev"
-                        data-label="<?php esc_attr_e('Copy Staging Media to Dev', 'abcnorio-func'); ?>"
+                        data-label="<?php esc_attr_e('Push Media to Dev', 'abcnorio-func'); ?>"
                     >
-                        <?php esc_html_e('Copy Staging Media to Dev', 'abcnorio-func'); ?>
+                        <?php esc_html_e('Push Media to Dev', 'abcnorio-func'); ?>
                     </button>
                     <p style="margin: 0.75rem 0 0; color: #666; font-size: 0.875em;">
                         <em><?php esc_html_e('Syncs staging WordPress uploads to dev. Existing dev media is overwritten.', 'abcnorio-func'); ?></em>

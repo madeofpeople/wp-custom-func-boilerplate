@@ -272,15 +272,15 @@ final class DeploymentActions
         exit;
     }
 
-    public static function pushToStaging(): void
+    private static function devToolPost(string $nonce, string $endpoint, string $verb): void
     {
-        check_ajax_referer('abcnorio_push_to_staging', 'nonce');
+        check_ajax_referer($nonce, 'nonce');
 
         if (!current_user_can('manage_options')) {
             wp_send_json_error(['message' => 'Insufficient permissions'], 403);
         }
 
-        $response = wp_remote_post(Deployment::orchestratorBaseUrl() . '/dev-tools/push-to-staging', [
+        $response = wp_remote_post(Deployment::orchestratorBaseUrl() . $endpoint, [
             'headers' => ['Authorization' => 'Bearer ' . Deployment::orchestratorSecret()],
             'timeout' => 10,
         ]);
@@ -293,92 +293,86 @@ final class DeploymentActions
         $body = json_decode(wp_remote_retrieve_body($response), true);
 
         if ($code === 409) {
-            wp_send_json_error(['message' => 'Push already in progress'], 409);
+            wp_send_json_error(['message' => ucfirst($verb) . ' already in progress'], 409);
         }
 
         if ($code !== 202) {
-            $orchestratorMessage = is_array($body) ? (string) ($body['error'] ?? $body['message'] ?? '') : '';
-            $errorMessage = $orchestratorMessage !== '' ? 'Push failed: ' . $orchestratorMessage : 'Push failed (HTTP ' . $code . ')';
+            $msg = is_array($body) ? (string) ($body['error'] ?? $body['message'] ?? '') : '';
+            $errorMessage = $msg !== '' ? ucfirst($verb) . ' failed: ' . $msg : ucfirst($verb) . ' failed (HTTP ' . $code . ')';
             wp_send_json_error(['message' => $errorMessage], $code);
         }
 
         wp_send_json_success($body);
+    }
+
+    private static function devToolPoll(string $nonce, string $statusKey): void
+    {
+        check_ajax_referer($nonce, 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Insufficient permissions'], 403);
+        }
+
+        $response = wp_remote_get(Deployment::orchestratorBaseUrl() . '/dev-tools/status', [
+            'headers' => ['Authorization' => 'Bearer ' . Deployment::orchestratorSecret()],
+            'timeout' => 5,
+        ]);
+
+        if (is_wp_error($response)) {
+            wp_send_json_error(['message' => $response->get_error_message()], 502);
+        }
+
+        $body = json_decode(wp_remote_retrieve_body($response), true);
+        wp_send_json_success(is_array($body) ? ($body[$statusKey] ?? []) : []);
+    }
+
+    public static function pushToStaging(): void
+    {
+        self::devToolPost('abcnorio_push_to_staging', '/dev-tools/push-to-staging', 'push');
     }
 
     public static function pollPushStatus(): void
     {
-        check_ajax_referer('abcnorio_poll_push_status', 'nonce');
-
-        if (!current_user_can('manage_options')) {
-            wp_send_json_error(['message' => 'Insufficient permissions'], 403);
-        }
-
-        $response = wp_remote_get(Deployment::orchestratorBaseUrl() . '/dev-tools/status', [
-            'headers' => ['Authorization' => 'Bearer ' . Deployment::orchestratorSecret()],
-            'timeout' => 5,
-        ]);
-
-        if (is_wp_error($response)) {
-            wp_send_json_error(['message' => $response->get_error_message()], 502);
-        }
-
-        $body = json_decode(wp_remote_retrieve_body($response), true);
-        $pushStatus = is_array($body) ? ($body['push'] ?? $body) : $body;
-        wp_send_json_success($pushStatus);
+        self::devToolPoll('abcnorio_poll_push_status', 'push');
     }
 
     public static function copyMediaToDev(): void
     {
-        check_ajax_referer('abcnorio_copy_media_to_dev', 'nonce');
-
-        if (!current_user_can('manage_options')) {
-            wp_send_json_error(['message' => 'Insufficient permissions'], 403);
-        }
-
-        $response = wp_remote_post(Deployment::orchestratorBaseUrl() . '/dev-tools/copy-media-to-dev', [
-            'headers' => ['Authorization' => 'Bearer ' . Deployment::orchestratorSecret()],
-            'timeout' => 10,
-        ]);
-
-        if (is_wp_error($response)) {
-            wp_send_json_error(['message' => $response->get_error_message()], 502);
-        }
-
-        $code = wp_remote_retrieve_response_code($response);
-        $body = json_decode(wp_remote_retrieve_body($response), true);
-
-        if ($code === 409) {
-            wp_send_json_error(['message' => 'Copy already in progress'], 409);
-        }
-
-        if ($code !== 202) {
-            $orchestratorMessage = is_array($body) ? (string) ($body['error'] ?? $body['message'] ?? '') : '';
-            $errorMessage = $orchestratorMessage !== '' ? 'Copy failed: ' . $orchestratorMessage : 'Copy failed (HTTP ' . $code . ')';
-            wp_send_json_error(['message' => $errorMessage], $code);
-        }
-
-        wp_send_json_success($body);
+        self::devToolPost('abcnorio_copy_media_to_dev', '/dev-tools/copy-media-to-dev', 'copy');
     }
 
     public static function pollCopyMediaStatus(): void
     {
-        check_ajax_referer('abcnorio_poll_copy_media_status', 'nonce');
+        self::devToolPoll('abcnorio_poll_copy_media_status', 'copyMedia');
+    }
 
-        if (!current_user_can('manage_options')) {
-            wp_send_json_error(['message' => 'Insufficient permissions'], 403);
-        }
+    public static function pullFromStaging(): void
+    {
+        self::devToolPost('abcnorio_pull_from_staging', '/dev-tools/pull-from-staging', 'push');
+    }
 
-        $response = wp_remote_get(Deployment::orchestratorBaseUrl() . '/dev-tools/status', [
-            'headers' => ['Authorization' => 'Bearer ' . Deployment::orchestratorSecret()],
-            'timeout' => 5,
-        ]);
+    public static function pollPullFromStagingStatus(): void
+    {
+        self::devToolPoll('abcnorio_poll_pull_from_staging_status', 'pullFromStaging');
+    }
 
-        if (is_wp_error($response)) {
-            wp_send_json_error(['message' => $response->get_error_message()], 502);
-        }
+    public static function copyMediaToStaging(): void
+    {
+        self::devToolPost('abcnorio_copy_media_to_staging', '/dev-tools/copy-media-to-staging', 'copy');
+    }
 
-        $body = json_decode(wp_remote_retrieve_body($response), true);
-        $copyStatus = is_array($body) ? ($body['copyMedia'] ?? []) : [];
-        wp_send_json_success($copyStatus);
+    public static function pollCopyMediaToStagingStatus(): void
+    {
+        self::devToolPoll('abcnorio_poll_copy_media_to_staging_status', 'copyMediaToStaging');
+    }
+
+    public static function pullFromDev(): void
+    {
+        self::devToolPost('abcnorio_pull_from_dev', '/dev-tools/pull-from-dev', 'push');
+    }
+
+    public static function pollPullFromDevStatus(): void
+    {
+        self::devToolPoll('abcnorio_poll_pull_from_dev_status', 'pullFromDev');
     }
 }

@@ -1,9 +1,8 @@
 /* global abcnorioDeployment */
 (function () {
-    const { ajaxUrl, triggerNonce, pollNonce, pushToStagingNonce, pollPushNonce, copyMediaNonce, pollCopyMediaNonce, targets = {} } = abcnorioDeployment;
+    const { ajaxUrl, triggerNonce, pollNonce, pushToStagingNonce, pollPushNonce, copyMediaNonce, pollCopyMediaNonce, pullFromStagingNonce, pollPullFromStagingNonce, copyMediaToStagingNonce, pollCopyMediaToStagingNonce, pullFromDevNonce, pollPullFromDevNonce, targets = {} } = abcnorioDeployment;
 
     let pollTimer = null;
-    let pushPollTimer = null;
     let buildStartTime = null;
     let timerInterval = null;
 
@@ -55,8 +54,8 @@
         return secs + 's';
     }
 
-    function startTimer(panel) {
-        buildStartTime = Date.now();
+    function startTimer(panel, startMs) {
+        buildStartTime = startMs || Date.now();
         clearInterval(timerInterval);
         timerInterval = setInterval(() => {
             const elapsed = Math.floor((Date.now() - buildStartTime) / 1000);
@@ -210,15 +209,20 @@
                         stopPolling();
                         stopTimer();
                         setButtonIdle(btn);
+                        let elapsedStr = '';
+                        if (st.started && st.finished && st.finished > st.started) {
+                            const elapsed = Math.round((st.finished - st.started) / 1000);
+                            elapsedStr = ' (' + formatElapsed(elapsed) + ')';
+                        }
                         const doneMessage = envKey === 'production'
-                            ? 'Backup and deployment complete.'
+                            ? 'Backup and deployment complete' + elapsedStr + '.'
                             : envKey === 'preview'
-                                ? 'Production preview build complete.'
-                                : 'Build complete.';
+                                ? 'Production preview build complete' + elapsedStr + '.'
+                                : 'Build complete' + elapsedStr + '.';
                         setStatus(panel, doneMessage);
                         setTimeout(() => setStatus(panel, ''), 5000);
                         if (envKey === 'production') {
-                            redirectToDeploymentNotice(envKey);
+                            redirectToDeploymentNotice(envKey, 'success', doneMessage);
                             return;
                         }
                         if (envKey === 'preview') {
@@ -251,10 +255,36 @@
         }, 2500);
     }
 
+    function initFromOrchestratorStatus() {
+        const body = new URLSearchParams({
+            action: 'abcnorio_poll_build_status',
+            nonce: pollNonce,
+        });
+        fetch(ajaxUrl, { method: 'POST', body })
+            .then((r) => r.json())
+            .then((data) => {
+                if (!data.success) return;
+                const st = data.data;
+                if (st.status !== 'running' && st.status !== 'requested') return;
+                const target = st.target;
+                if (!target) return;
+                const btn = document.querySelector('.js-trigger-build[data-target="' + target + '"]');
+                const panel = btn && btn.closest('.deployment-tab');
+                if (!btn || !panel) return;
+                setButtonRunning(btn);
+                startTimer(panel, st.started || null);
+                startPolling(btn, panel, target);
+            })
+            .catch(() => {});
+    }
+
     initializePreviewLinks();
 
     // Highlight only after build-complete redirect when backup list actually changed.
     maybeHighlightNewBackup();
+
+    // Resume spinner + polling if a build is already running when the page loads.
+    initFromOrchestratorStatus();
 
     // Strip transient notice params from the URL so a page reload doesn't re-show them.
     (function stripNoticeParams() {
@@ -315,125 +345,109 @@
                     redirectToDeploymentNotice(target, 'error', 'Request failed while starting ' + (target === 'production' ? 'deployment' : 'build') + '.');
                 });
         });
+    });    // --- Dev tools ---
+    function wireDevToolButton(selector, { statusClass, startingText, startAction, startNonce, pollAction, pollNonce: pollNonceVal, startErrPrefix, failPrefix }) {
+        const btn = document.querySelector(selector);
+        if (!btn) return;
+        let devPollTimer = null;
+        btn.addEventListener('click', () => {
+            const panel = btn.closest('.deployment-tab');
+            const statusEl = panel && panel.querySelector(statusClass);
+            setButtonRunning(btn);
+            if (statusEl) statusEl.textContent = startingText;
+            fetch(ajaxUrl, { method: 'POST', body: new URLSearchParams({ action: startAction, nonce: startNonce }) })
+                .then((r) => r.json())
+                .then((data) => {
+                    if (!data.success) {
+                        setButtonIdle(btn);
+                        if (statusEl) statusEl.textContent = '';
+                        const msg = data.data && data.data.message ? data.data.message : 'Unknown error';
+                        showAdminNotice(startErrPrefix + ': ' + msg, 'error');
+                        return;
+                    }
+                    if (devPollTimer) clearInterval(devPollTimer);
+                    devPollTimer = setInterval(() => {
+                        fetch(ajaxUrl, { method: 'POST', body: new URLSearchParams({ action: pollAction, nonce: pollNonceVal }) })
+                            .then((r) => r.json())
+                            .then((pollData) => {
+                                if (!pollData.success) return;
+                                const st = pollData.data;
+                                if (st.status === 'done') {
+                                    clearInterval(devPollTimer); devPollTimer = null;
+                                    setButtonIdle(btn);
+                                    if (statusEl) statusEl.textContent = '';
+                                    showAdminNotice(st.message || 'Done.', 'success');
+                                } else if (st.status === 'failed') {
+                                    clearInterval(devPollTimer); devPollTimer = null;
+                                    setButtonIdle(btn);
+                                    if (statusEl) statusEl.textContent = '';
+                                    showAdminNotice(failPrefix + ': ' + (st.message || 'Check server logs.'), 'error');
+                                }
+                            })
+                            .catch(() => {});
+                    }, 2000);
+                })
+                .catch(() => {
+                    setButtonIdle(btn);
+                    if (statusEl) statusEl.textContent = '';
+                    showAdminNotice('Request failed.', 'error');
+                });
+        });
+    }
+
+    wireDevToolButton('.js-push-to-staging', {
+        statusClass: '.js-push-status',
+        startingText: 'Pushing\u2026',
+        startAction: 'abcnorio_push_to_staging',
+        startNonce: pushToStagingNonce,
+        pollAction: 'abcnorio_poll_push_status',
+        pollNonce: pollPushNonce,
+        startErrPrefix: 'Could not start push',
+        failPrefix: 'Push failed',
     });
-    // --- Push to staging ---
-    const pushBtn = document.querySelector('.js-push-to-staging');
-    if (pushBtn) {
-        pushBtn.addEventListener('click', () => {
-            const panel = pushBtn.closest('.deployment-tab');
-            const statusEl = panel && panel.querySelector('.js-push-status');
 
-            setButtonRunning(pushBtn);
-            if (statusEl) statusEl.textContent = 'Pushing\u2026';
+    wireDevToolButton('.js-copy-media-to-dev', {
+        statusClass: '.js-copy-media-status',
+        startingText: 'Pushing\u2026',
+        startAction: 'abcnorio_copy_media_to_dev',
+        startNonce: copyMediaNonce,
+        pollAction: 'abcnorio_poll_copy_media_status',
+        pollNonce: pollCopyMediaNonce,
+        startErrPrefix: 'Could not start push',
+        failPrefix: 'Push failed',
+    });
 
-            const body = new URLSearchParams({
-                action: 'abcnorio_push_to_staging',
-                nonce: pushToStagingNonce,
-            });
+    wireDevToolButton('.js-pull-from-staging', {
+        statusClass: '.js-pull-from-staging-status',
+        startingText: 'Pushing\u2026',
+        startAction: 'abcnorio_pull_from_staging',
+        startNonce: pullFromStagingNonce,
+        pollAction: 'abcnorio_poll_pull_from_staging_status',
+        pollNonce: pollPullFromStagingNonce,
+        startErrPrefix: 'Could not start push',
+        failPrefix: 'Push failed',
+    });
 
-            fetch(ajaxUrl, { method: 'POST', body })
-                .then((r) => r.json())
-                .then((data) => {
-                    if (!data.success) {
-                        setButtonIdle(pushBtn);
-                        const msg = data.data && data.data.message ? data.data.message : 'Unknown error';
-                        if (statusEl) statusEl.textContent = 'Error: ' + msg;
-                        return;
-                    }
+    wireDevToolButton('.js-copy-media-to-staging', {
+        statusClass: '.js-copy-media-to-staging-status',
+        startingText: 'Pushing\u2026',
+        startAction: 'abcnorio_copy_media_to_staging',
+        startNonce: copyMediaToStagingNonce,
+        pollAction: 'abcnorio_poll_copy_media_to_staging_status',
+        pollNonce: pollCopyMediaToStagingNonce,
+        startErrPrefix: 'Could not start push',
+        failPrefix: 'Push failed',
+    });
 
-                    if (pushPollTimer) clearInterval(pushPollTimer);
-                    pushPollTimer = setInterval(() => {
-                        const pollBody = new URLSearchParams({
-                            action: 'abcnorio_poll_push_status',
-                            nonce: pollPushNonce,
-                        });
-                        fetch(ajaxUrl, { method: 'POST', body: pollBody })
-                            .then((r) => r.json())
-                            .then((pollData) => {
-                                if (!pollData.success) return;
-                                const st = pollData.data;
-                                if (st.status === 'done') {
-                                    clearInterval(pushPollTimer);
-                                    pushPollTimer = null;
-                                    setButtonIdle(pushBtn);
-                                    if (statusEl) statusEl.textContent = st.message || 'Push complete.';
-                                    setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 5000);
-                                } else if (st.status === 'failed') {
-                                    clearInterval(pushPollTimer);
-                                    pushPollTimer = null;
-                                    setButtonIdle(pushBtn);
-                                    if (statusEl) statusEl.textContent = 'Push failed: ' + (st.message || 'check logs.');
-                                }
-                            })
-                            .catch(() => { /* network hiccup — keep polling */ });
-                    }, 2000);
-                })
-                .catch(() => {
-                    setButtonIdle(pushBtn);
-                    if (statusEl) statusEl.textContent = 'Request failed.';
-                });
-        });
-    }
-
-    // --- Copy staging media to dev ---
-    const copyMediaBtn = document.querySelector('.js-copy-media-to-dev');
-    if (copyMediaBtn) {
-        let copyMediaPollTimer = null;
-
-        copyMediaBtn.addEventListener('click', () => {
-            const panel = copyMediaBtn.closest('.deployment-tab');
-            const statusEl = panel && panel.querySelector('.js-copy-media-status');
-
-            setButtonRunning(copyMediaBtn);
-            if (statusEl) statusEl.textContent = 'Copying…';
-
-            const body = new URLSearchParams({
-                action: 'abcnorio_copy_media_to_dev',
-                nonce: copyMediaNonce,
-            });
-
-            fetch(ajaxUrl, { method: 'POST', body })
-                .then((r) => r.json())
-                .then((data) => {
-                    if (!data.success) {
-                        setButtonIdle(copyMediaBtn);
-                        const msg = data.data && data.data.message ? data.data.message : 'Unknown error';
-                        if (statusEl) statusEl.textContent = 'Error: ' + msg;
-                        return;
-                    }
-
-                    if (copyMediaPollTimer) clearInterval(copyMediaPollTimer);
-                    copyMediaPollTimer = setInterval(() => {
-                        const pollBody = new URLSearchParams({
-                            action: 'abcnorio_poll_copy_media_status',
-                            nonce: pollCopyMediaNonce,
-                        });
-                        fetch(ajaxUrl, { method: 'POST', body: pollBody })
-                            .then((r) => r.json())
-                            .then((pollData) => {
-                                if (!pollData.success) return;
-                                const st = pollData.data;
-                                if (st.status === 'done') {
-                                    clearInterval(copyMediaPollTimer);
-                                    copyMediaPollTimer = null;
-                                    setButtonIdle(copyMediaBtn);
-                                    if (statusEl) statusEl.textContent = st.message || 'Copy complete.';
-                                    setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 5000);
-                                } else if (st.status === 'failed') {
-                                    clearInterval(copyMediaPollTimer);
-                                    copyMediaPollTimer = null;
-                                    setButtonIdle(copyMediaBtn);
-                                    if (statusEl) statusEl.textContent = 'Copy failed: ' + (st.message || 'check logs.');
-                                }
-                            })
-                            .catch(() => { /* network hiccup — keep polling */ });
-                    }, 2000);
-                })
-                .catch(() => {
-                    setButtonIdle(copyMediaBtn);
-                    if (statusEl) statusEl.textContent = 'Request failed.';
-                });
-        });
-    }
+    wireDevToolButton('.js-pull-from-dev', {
+        statusClass: '.js-pull-from-dev-status',
+        startingText: 'Pushing\u2026',
+        startAction: 'abcnorio_pull_from_dev',
+        startNonce: pullFromDevNonce,
+        pollAction: 'abcnorio_poll_pull_from_dev_status',
+        pollNonce: pollPullFromDevNonce,
+        startErrPrefix: 'Could not start push',
+        failPrefix: 'Push failed',
+    });
 
 }());
