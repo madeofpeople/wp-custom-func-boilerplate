@@ -2,7 +2,7 @@
     "name": "abcnorio/custom-func",
     "description": "Composer-first functionality plugin for the abcnorio.org headless WordPress project.",
     "type": "wordpress-plugin",
-    "version": "0.5.2",
+    "version": "0.5.3",
     "license": "GPL-2.0-or-later",
     "keywords": ["wordpress", "bedrock", "headless", "abcnorio"],
     "authors": [
