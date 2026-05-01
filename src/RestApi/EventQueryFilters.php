@@ -97,38 +97,13 @@ final class EventQueryFilters
 
     private static function buildEffectiveEndClause(string $compare, string $value): array
     {
-        // Effective end date:
-        // - use event_end_date when present
-        // - otherwise implicitly treat event_start_date as end date
+        // Filter on event_start_date only — avoids the multi-JOIN OR/NOT-EXISTS
+        // pattern needed for end-date fallback, which causes query timeouts.
         return [
-            'relation' => 'OR',
-            [
-                'key'     => 'event_end_date',
-                'value'   => $value,
-                'compare' => $compare,
-                'type'    => 'DATETIME',
-            ],
-            [
-                'relation' => 'AND',
-                [
-                    'relation' => 'OR',
-                    [
-                        'key'     => 'event_end_date',
-                        'compare' => 'NOT EXISTS',
-                    ],
-                    [
-                        'key'     => 'event_end_date',
-                        'value'   => '',
-                        'compare' => '=',
-                    ],
-                ],
-                [
-                    'key'     => 'event_start_date',
-                    'value'   => $value,
-                    'compare' => $compare,
-                    'type'    => 'DATETIME',
-                ],
-            ],
+            'key'     => 'event_start_date',
+            'value'   => $value,
+            'compare' => $compare,
+            'type'    => 'DATETIME',
         ];
     }
 }
